@@ -128,13 +128,13 @@ class ResultWrapper(object):
     SUCCESS = "Success"
     FAILED = "Failed"
     PENDING = "Pending"
-    READY = "Ready"
+
 
     def __init__(self, request_id):
         self.request_id = request_id
         self.result = None
         self.thread = None
-        self._status = self.READY
+        self._status = self.PENDING
         self.exception = None
         self.done_event = Event()
         self._status_change_callback = None
@@ -206,12 +206,14 @@ class WorkerThread(threading.Thread):
                     break
                 try:
                     result = request.callable(*request.args, **request.kwds)
-                    self._results_queue.put((request, result))
+                    # 我们约定result总是先于status写入。这样状态改变的回调就可以同时把结果也写进去了
                     result_warp.result = result
                     result_warp.status = ResultWrapper.SUCCESS
+                    self._results_queue.put((request, result))
                 except Exception as e:
-                    result_warp.status = ResultWrapper.FAILED
                     result_warp.exception = e
+                    result_warp.result = sys.exc_info()
+                    result_warp.status = ResultWrapper.FAILED
                     request.exception = True
                     self._results_queue.put((request, sys.exc_info()))
 
@@ -359,7 +361,7 @@ class ThreadPool:
         assert isinstance(request, WorkRequest)
         # don't reuse old work requests
         assert not getattr(request, 'exception', None)
-        request.result.status = ResultWrapper.PENDING
+        # request.result.status = ResultWrapper.PENDING
         self._requests_queue.put(request, block, timeout)
         self.workRequests[request.requestID] = request
         self.task_done_event.clear()

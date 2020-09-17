@@ -4,30 +4,62 @@
 
 最起码，你不必自己调用pool.wait()了。原来的实现。你如果不调用这个，他就不会从结果队列里面取结果。
 
-其次。除了用回调函数，现在还提供了更方便的方法来获取结果。除了结果以外，还能随时获得任务执行的状态。而且还能通过结果后端把结果持久化到数据库。
+其次。除了用回调函数，现在还提供了更方便的方法来获取结果。而且还能通过结果后端把结果持久化到数据库。
 
-同时，通过`AsyncFunctionWrapper`，可以让代码更具可读性，写着更方便。
+这个库在功能上有参考celery。在单机的情形下，也可一定程度的替代celery的部分功能。但是它和celery很不一样。
 
-它的作用类似于celery。区别在于它是单机的。更加轻量。不需要消息队列。消耗更少的资源（prefork开进程，而我开线程）。你可以在不怎么消耗资源的情况下开800个worker（这里其实可以优化，但是800个已经很多了不是吗）。
+区别在于这个库更加轻量，占用的资源更少（celery默认的prefork会为每个worker创建一个进程，而我这里仅仅创建一个线程）。不需要消息队列（这意味着它不能调用远程的过程，但同时也意味着他的响应更快）。
 
-从耦合度考虑。我们并不总是将异步的任务和同步的任务拆分成不同的服务。如果没有跨进程的需求，那么我为什么要用celery和消息队列呢？
+有了这个库，你就可以随时随地的异步了。考虑下面的情形：
+
+```python
+from simple_async.asyncImp import async_function, ResultWrapper
+
+
+@async_function()
+def get_some_info_from_rpc(i):
+    # 从rpc获取数据，非常缓慢
+    print("start %d" % i)
+    sleep(2)
+    print("end %d" % i)
+    return i
+
+@async_function()
+def get_some_info_from_db(i):
+    # 从数据库获取数据，非常缓慢
+    print("start %d" % i)
+    sleep(2)
+    print("end %d" % i)
+    return i
+
+@async_function()
+def get_some_info_from_webapi(i):
+    # 从rest api获取数据，非常缓慢
+    print("start %d" % i)
+    sleep(2)
+    print("end %d" % i)
+    return i
+
+# 现在我们可以并行的调用三个方法了
+def main():
+    r1 = get_some_info_from_rpc(1)
+    r2 = get_some_info_from_db(2)
+    r3 = get_some_info_from_webapi(3)
+    print(r1.wait()+r2.wait()+r3.wait())
+
+main()
+```
+
+
 
 ## 安装
 
 - 克隆代码,放入自己的项目中,作为一个app
 - 在install_app中注册
 - migrate
+- 你可以通过再setting.py文件中加入`ASYNC_WORKER_NUM`选项来设置worker的数量
 
 ## 快速指引
-
-```python
-@async_function(callback)
-def some_block_task(i):
-    print("start %d" % i)
-    sleep(2)
-    print("end %d" % i)
-    return i
-```
 
 你可以通过`async_function`修饰器将一个同步函数变为一个异步函数.`async_function`修饰器有一个可选的参数,用于填入运行完成后的回调函数。要获取执行结果,除了回调函数,还有更多方法,你会在接下来读到。
 
@@ -43,9 +75,9 @@ def some_block_task(i):
 
   同步调用原函数，返回值为原函数的返回值
 
-- `with_callback(self, args, kwargs, callback)`：
+- `with_option(self, args, kwargs, callback=None, keep_result=None)`：
 
-  效果和`__call__`相同，但是你可以为本次调用单独指定callback。返回值依然是`ResultWrapper`对象。
+  效果和`__call__`相同，但是你可以为本次调用单独指定callback和是否持久化原函数返回值。如果keep_result=True，原函数返回值会持久化到数据库。返回值依然是`ResultWrapper`对象。
 
 异步调用总是会返回一个`ResultWrapper`对象，`ResultWrapper`对象有一些重要方法：
 
@@ -55,9 +87,8 @@ def some_block_task(i):
 
 - status：
 
-  属性。可能的取值
+  属性。可能的取值：
 
-  - Ready：已就绪但尚未加入线程池。通常你不太能读到这个取值。
   - Pending：任务已经分配给线程池了，但是由于没有空闲的线程，所以这个任务正在排队
   - Running：任务正在执行
   - Failed：执行时抛出了异常
@@ -76,37 +107,36 @@ from simple_async.asyncImp import async_function, ResultWrapper, get_result, wai
 def callback(request, result):
     print "callback %s %s" % (request, str(result))
 
-
+# 对于相当耗时的任务。我们更倾向于通过回调函数来处理
 @async_function(callback)
 def some_block_task(i):
     print("start %d" % i)
-    sleep(2)
+    sleep(20)
     print("end %d" % i)
     return i
 
-# test case 1
-def test_wait():
+def i_cant_wait_the_task():
     result_list = [some_block_task(i) for i in range(10)]
     print("任务已发送")
-    for i, result in enumerate(result_list):
-        assert i == result.wait()
-        assert result.status == ResultWrapper.SUCCESS
 
-test_wait()
+i_cant_wait_the_task()
+wait_all()
 ```
 
-我不知道怎么解释。但我觉得这个例子应该很好懂。
+----------
 
--------
+接下来。我们再来看两个例子。他们演示了如何使用结果后端。结果后端会将数据持久化到数据库，你可以通过request_id在之后通过get_result(request_id)来处理。
 
-我们再来看两个例子
+这样做的好处在于，你可能想要在合适的时候再统一处理调用的结果。或者将调用的结果交给其他服务处理。
+
+注意： 一个尚未运行的任务（pending中的任务）不会加入数据库。任何数据库中查不到的任务get_result()的返回值为（“Pending”，None）。
 
 ```python
 class TestException(Exception):
     pass
 
-
-@async_function(callback)
+# 启用结果后端
+@async_function(keep_result=True)
 def when_error_raise():
     raise TestException
 
@@ -142,9 +172,16 @@ def test_result_backend():
 
 你可以通过三种方式获得异步调用的返回值。分别是通过回调函数，通过`ResultWrapper`对象，和通过get_result(request_id)获得。
 
-函数的调用结果会持久化到数据库中。你可以在任何时候通过request_id去取。你可以在返回的`ResultWrapper`对象中获得request_id。
+你可以在返回的`ResultWrapper`对象中获得request_id。
 
-除此之外，还有一个值得注意的函数，wait_all()。如果你要等待所有异步任务执行完毕然后安全的结束你的程序，你应该在程序结束前调用wait_all()。
+除此之外，还有几个值得注意的函数：
+
+- wait_all()：如果你要等待所有异步任务执行完毕然后安全的结束你的程序，你应该在程序结束前调用wait_all()。
+- async_call_function(func, args, kwargs, callback=None, keep_result=False)：如果你想异步调用一个没有被@async_function包装的函数，那么你可以用这个方法
+- set_print_exc(bool)：默认为true。当原函数发生异常时，它会将原函数的异常栈打印到标准错误中
+- get_payload()：用来观察线程池的负载情况。返回pending的任务数量。
+
+
 
 *以上提到的所有的东西，你可以从`simple_async.asyncImp `引入*
 

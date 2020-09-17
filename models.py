@@ -42,23 +42,25 @@ class ResultBackend(models.Model):
         # 所以必须用事务
         # 不管用，事务隔离级别不对？事务没有打开？
         # 加锁
-        # 这下写结果变成串行的了，这里可能成为效率瓶颈。不过好像写结果本来就是串行的。
-        # todo：加入同时写入状态和结果的方法，以解决这个冲突.
+        # 更新，现在不会冲突了，现在对于同一行，这两个函数始终是串行访问的
         # with transaction.atomic():
-        with cls.result_status_lock:
-            instance, _ = cls.objects.get_or_create(task_id=task_id)
-            instance.result = cls.serialize(obj)
-            instance.save()
+        # with cls.result_status_lock:
+        instance, _ = cls.objects.get_or_create(task_id=task_id)
+        instance.result = cls.serialize(obj)
+        instance.save()
 
     @classmethod
     def set_task_status(cls, task_id, status):
         # with transaction.atomic():
-        with cls.result_status_lock:
-            instance, _ = cls.objects.get_or_create(task_id=task_id)
-            instance.status = status
-            instance.save()
+        # with cls.result_status_lock:
+        instance, _ = cls.objects.get_or_create(task_id=task_id)
+        instance.status = status
+        instance.save()
 
     @classmethod
     def get_result(cls, task_id):
-        instance = cls.objects.get(task_id=task_id)
+        try:
+            instance = cls.objects.get(task_id=task_id)
+        except:
+            return "Pending", None
         return instance.status, cls.deserialize(instance.result)

@@ -8,7 +8,7 @@ django.setup()
 
 import unittest
 from time import sleep
-from simple_async.asyncImp import async_function, ResultWrapper, get_result, wait_all
+from simple_async.asyncImp import async_function, ResultWrapper, get_result, wait_all, get_payload
 
 
 def callback(request, result):
@@ -66,7 +66,7 @@ def test_result_backend():
         wait_all()
         status, result = get_result(result.request_id)
         assert status == ResultWrapper.FAILED
-        print result
+        assert isinstance(result, list) and len(result) > 1
 
 
 # test case 4
@@ -79,13 +79,17 @@ def test_success():
         # sleep(60 * 60 * 50)
         status, result = get_result(result.request_id)
         assert status == ResultWrapper.SUCCESS
-        print result
+        assert result == i
 
+def test_payload():
+    result_list = [some_block_task(i) for i in range(40)]
+    print(get_payload())
 
 if __name__ == '__main__':
     test_wait()
     test_exception()
-    test_result_backend()
-    test_success()
+    # test_result_backend()
+    # test_success()
+    test_payload()
     wait_all()
-    # sleep(60*60*50)
+    sleep(60*60*50)
